@@ -149,20 +149,36 @@ class MessengerBot {
         await this._poll(pollCount);
         this.consecutiveErrors = 0;
       } catch (err) {
-        this.consecutiveErrors++;
-        this.log(`Poll error (${this.consecutiveErrors}/3): ${err.message}`);
-        this.db.setAccountStatus(this.account.id, 'running', `Last error: ${err.message}`);
+        const isTransient = (
+          err.message.includes('detached Frame') ||
+          err.message.includes('Execution context was destroyed') ||
+          err.message.includes('Session closed') ||
+          err.message.includes('Target closed') ||
+          err.message.includes('Navigation timeout')
+        );
 
-        if (this.consecutiveErrors >= 3) {
-          throw new Error(`3 consecutive poll failures — stopping. Last: ${err.message}`);
-        }
-        // Try to recover: reload inbox
-        try {
-          await this.page.goto('https://www.facebook.com/messages/t/', {
-            waitUntil: 'networkidle2', timeout: 30000,
-          });
-        } catch {
-          // ignore recovery failure — next iteration will try again
+        if (isTransient) {
+          // Don't count navigation/frame errors toward the failure limit — just reload and retry
+          this.log(`Transient error (ignored): ${err.message}`);
+          this.db.setAccountStatus(this.account.id, 'running', `Last error: ${err.message}`);
+          try {
+            await this.page.goto('https://www.facebook.com/messages/t/', {
+              waitUntil: 'networkidle2', timeout: 30000,
+            });
+          } catch { /* ignore */ }
+        } else {
+          this.consecutiveErrors++;
+          this.log(`Poll error (${this.consecutiveErrors}/3): ${err.message}`);
+          this.db.setAccountStatus(this.account.id, 'running', `Last error: ${err.message}`);
+
+          if (this.consecutiveErrors >= 3) {
+            throw new Error(`3 consecutive poll failures — stopping. Last: ${err.message}`);
+          }
+          try {
+            await this.page.goto('https://www.facebook.com/messages/t/', {
+              waitUntil: 'networkidle2', timeout: 30000,
+            });
+          } catch { /* ignore */ }
         }
       }
       if (this.running) await sleep(POLL_INTERVAL);
