@@ -1,9 +1,8 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+// Use puppeteer directly — puppeteer-extra has ESM/CJS incompatibility with puppeteer-core v21+
+const puppeteer = require('puppeteer');
 
 const POLL_INTERVAL = 45000;
 const BROWSER_ARGS = [
@@ -80,7 +79,7 @@ class MessengerBot {
 
   async _launch() {
     // Persistent profile dir — same fingerprint across restarts, no re-login needed
-    const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+    const dataDir = process.env.DATA_DIR || '/tmp/fb-profiles';
     const profileDir = path.join(dataDir, `profile-${this.account.id}`);
     const isNewProfile = !fs.existsSync(profileDir);
     fs.mkdirSync(profileDir, { recursive: true });
@@ -94,6 +93,12 @@ class MessengerBot {
     });
     this.page = await this.browser.newPage();
     await this.page.setViewport({ width: 1280, height: 900 });
+    // Basic stealth — hide automation signals
+    await this.page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+      window.chrome = { runtime: {} };
+    });
 
 
     // Only inject cookies on first launch — after that the profile has them
