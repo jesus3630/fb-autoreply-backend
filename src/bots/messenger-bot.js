@@ -226,7 +226,8 @@ class MessengerBot {
 
     for (const convoUrl of convoUrls) {
       if (!this.running) break;
-      const cleanUrl = convoUrl.split('?')[0];
+      // Always normalize to trailing slash so cooldown lookups match regardless of source
+      const cleanUrl = convoUrl.split('?')[0].replace(/\/?$/, '/');
       if (await this.db.wasRecentlyReplied(this.account.id, cleanUrl)) {
         this.log(`Skipping (replied recently): ${cleanUrl}`);
         continue;
@@ -298,7 +299,7 @@ class MessengerBot {
       this.log(`Marketplace screenshot: ${shot}`);
 
       // Step 2: capture URL from this first click (most recent thread)
-      if (/\/messages\/t\/\d+/.test(afterUrl)) discovered.push(afterUrl.split('?')[0]);
+      if (/\/messages\/t\/\d+/.test(afterUrl)) discovered.push(afterUrl.split('?')[0].replace(/\/?$/, '/'));
 
       // Step 3: find buyer conversation items in the sidebar
       // Pattern: "BuyerName · ListingTitle · 2h" or "· now" or "· just now" for new messages
@@ -331,7 +332,7 @@ class MessengerBot {
         await this.page.mouse.click(item.x, item.y);
         await sleep(800);
         const url = this.page.url();
-        if (/\/messages\/t\/\d+/.test(url)) discovered.push(url.split('?')[0]);
+        if (/\/messages\/t\/\d+/.test(url)) discovered.push(url.split('?')[0].replace(/\/?$/, '/'));
       }
 
       this.log(`Marketplace folder discovery: ${[...new Set(discovered)].length} threads`);
