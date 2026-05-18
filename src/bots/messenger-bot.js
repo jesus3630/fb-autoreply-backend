@@ -218,7 +218,7 @@ class MessengerBot {
       if (id) convoUrls.push(`https://www.facebook.com/messages/t/${id}/`);
     }
 
-    convoUrls = [...new Set(convoUrls)].slice(0, 30);
+    convoUrls = [...new Set(convoUrls)].slice(0, 50);
     this.log(`Found ${convoUrls.length} conversations: ${JSON.stringify(convoUrls.map(u => u.split('/t/')[1]))}`);
 
     if (convoUrls.length === 0) {
@@ -305,7 +305,7 @@ class MessengerBot {
       if (/\/messages\/t\/\d+/.test(afterUrl)) discovered.push(afterUrl.split('?')[0]);
 
       // Step 3: find buyer conversation items in the sidebar
-      // Pattern: "BuyerName · ListingTitle · Xh" — has "·" and ends with a timestamp
+      // Pattern: "BuyerName · ListingTitle · 2h" or "· now" or "· just now" for new messages
       const items = await this.page.evaluate(() => {
         const results = [];
         const seenY = new Set();
@@ -314,10 +314,11 @@ class MessengerBot {
           if (rect.left > 370 || rect.right < 10) continue;
           if (rect.width < 100 || rect.height < 40 || rect.height > 150) continue;
           const text = (el.innerText || '').trim();
-          // Buyer conversation items: contain "·" AND end with a short timestamp
-          if (!text.includes('\xb7') && !text.includes('·')) continue; // must have middle dot
-          if (!text.match(/\d+[hmdsw]\s*$/)) continue;              // must end with timestamp
-          if (text.startsWith('Marketplace\n')) continue;            // skip the folder header
+          // Must contain middle dot (Marketplace buyer thread indicator)
+          if (!text.includes('\xb7') && !text.includes('·')) continue;
+          // Accept numeric timestamp OR "now"/"just now" for brand-new messages
+          if (!text.match(/(\d+[hmdsw]|now|just now)\s*$/i)) continue;
+          if (text.startsWith('Marketplace\n')) continue;
           if (text.length < 5 || text.length > 200) continue;
           const yKey = Math.round(rect.top / 15) * 15;
           if (seenY.has(yKey)) continue;
