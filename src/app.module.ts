@@ -9,6 +9,7 @@ import { TemplatesModule } from './templates/templates.module';
 import { BotsModule } from './bots/bots.module';
 import { BillingModule } from './billing/billing.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { LoginSessionsModule } from './login-sessions/login-sessions.module';
 import { User } from './users/user.entity';
 import { FbAccount } from './accounts/fb-account.entity';
 import { Template } from './templates/template.entity';
@@ -35,6 +36,7 @@ import { ReplyLog } from './analytics/reply-log.entity';
     BotsModule,
     BillingModule,
     AnalyticsModule,
+    LoginSessionsModule,
   ],
 })
 export class AppModule {}
