@@ -23,8 +23,10 @@ export class AccountsController {
   }
 
   @Post()
-  create(@CurrentUser() user: { id: string }, @Body() dto: CreateAccountDto) {
-    return this.accounts.create(user.id, dto.label);
+  async create(@CurrentUser() user: { id: string }, @Body() dto: CreateAccountDto) {
+    const account = await this.accounts.create(user.id, dto.label);
+    const { cookies: _cookies, ...safe } = account as any;
+    return safe;
   }
 
   @Patch(':id/cookies')
