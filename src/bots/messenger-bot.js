@@ -151,6 +151,8 @@ class MessengerBot {
       } catch (err) {
         const isTransient = (
           err.message.includes('detached Frame') ||
+          err.message.includes('frame was detached') ||
+          err.message.includes('Navigating frame') ||
           err.message.includes('Execution context was destroyed') ||
           err.message.includes('Session closed') ||
           err.message.includes('Target closed') ||
@@ -197,28 +199,22 @@ class MessengerBot {
     const currentUrl = this.page.url();
     this.log(`Page URL: ${currentUrl}`);
 
-    // Open Marketplace folder and discover all visible buyer thread URLs by clicking sidebar items
+    // Open Marketplace folder — sidebar items are already newest-first
     const folderUrls = await this._openMarketplaceFolder();
     for (const u of folderUrls) this._seenThreadIds.add(u.match(/\/messages\/t\/([\d]+)/)?.[1] || '');
 
-    // Collect thread URLs from DOM / data attributes
-    let convoUrls = await this._scrapeConvoUrls();
-
-    // Include Marketplace folder discoveries
-    convoUrls.push(...folderUrls);
-
-    // Facebook auto-redirects messages/t/ to the last open thread — always include it
+    // Facebook auto-redirects messages/t/ to the last open thread
     const autoThread = currentUrl.match(/\/messages\/t\/([\d]+)/);
-    if (autoThread) {
-      convoUrls.unshift(`https://www.facebook.com/messages/t/${autoThread[1]}/`);
-    }
+    const autoUrl = autoThread ? [`https://www.facebook.com/messages/t/${autoThread[1]}/`] : [];
 
-    // Include all previously seen thread IDs (accumulate across polls)
-    for (const id of this._seenThreadIds) {
-      if (id) convoUrls.push(`https://www.facebook.com/messages/t/${id}/`);
-    }
+    // Collect thread URLs from DOM / data attributes (supplemental)
+    const scraped = await this._scrapeConvoUrls();
 
-    convoUrls = [...new Set(convoUrls)].slice(0, 50);
+    // Previously seen thread IDs (older accumulation — check last)
+    const seenUrls = [...this._seenThreadIds].filter(Boolean).map(id => `https://www.facebook.com/messages/t/${id}/`);
+
+    // Priority order: Marketplace sidebar (newest first) → auto-thread → scraped → accumulated history
+    let convoUrls = [...new Set([...folderUrls, ...autoUrl, ...scraped, ...seenUrls])].slice(0, 50);
     this.log(`Found ${convoUrls.length} conversations: ${JSON.stringify(convoUrls.map(u => u.split('/t/')[1]))}`);
 
     if (convoUrls.length === 0) {
@@ -404,6 +400,7 @@ class MessengerBot {
       );
     }).catch(() => false);
 
+    this.log(`isMarketplace=${isMarketplace} for ${convoUrl}`);
     if (!isMarketplace) {
       this.log(`Skipping non-Marketplace thread: ${convoUrl}`);
       return false;
@@ -412,28 +409,35 @@ class MessengerBot {
     // Detect if the last message in the conversation is from us (outgoing).
     // Outgoing bubbles are right-aligned; incoming are left-aligned.
     // We find visible message text bubbles via dir="auto" and check their center x position.
-    const lastIsFromUs = await this.page.evaluate(() => {
+    const { lastIsFromUs: lastIsFromUs, debugBubble } = await this.page.evaluate(() => {
       const vpWidth = document.documentElement.clientWidth || window.innerWidth || 1280;
       const vpHeight = document.documentElement.clientHeight || window.innerHeight || 900;
       const bubbles = Array.from(document.querySelectorAll('[dir="auto"]')).filter(el => {
-        // Exclude input fields — the message compose box is also dir="auto" and contenteditable
         if (el.getAttribute('contenteditable')) return false;
         if (el.getAttribute('role') === 'textbox') return false;
         const text = (el.textContent || '').trim();
         if (!text) return false;
         const rect = el.getBoundingClientRect();
-        // Must be in chat area (not sidebar, not input row at very bottom)
         return rect.width > 30 && rect.width < 700 && rect.height > 14 &&
                rect.top > 100 && rect.bottom < (vpHeight - 80) &&
-               rect.left > 300; // chat panel starts after sidebar
+               rect.left > 300 &&
+               rect.left < 900; // exclude right-side listing details panel (starts ~x=900+)
       });
-      if (!bubbles.length) return false;
+      if (!bubbles.length) return { lastIsFromUs: false, debugBubble: 'NO_BUBBLES' };
       const last = bubbles[bubbles.length - 1];
       const rect = last.getBoundingClientRect();
-      // Outgoing: center of bubble is in the right 40% of the viewport
-      return (rect.left + rect.width / 2) > (vpWidth * 0.6);
-    }).catch(() => false);
+      const centerX = rect.left + rect.width / 2;
+      // Message thread column is ~360-860px wide. Outgoing bubbles are right-aligned
+      // within it, so their center is typically 600-820. Incoming are 400-600.
+      // Use 55% of viewport (704px) as the outgoing threshold — above the midpoint of the thread.
+      const isFromUs = centerX > (vpWidth * 0.55);
+      return {
+        lastIsFromUs: isFromUs,
+        debugBubble: `text="${(last.textContent||'').trim().slice(0,40)}" rect={l:${Math.round(rect.left)},r:${Math.round(rect.right)},w:${Math.round(rect.width)},cx:${Math.round(centerX)}} vpW=${vpWidth} total=${bubbles.length}`,
+      };
+    }).catch(() => ({ lastIsFromUs: false, debugBubble: 'EVAL_ERROR' }));
 
+    this.log(`lastIsFromUs=${lastIsFromUs} [${debugBubble}] for ${convoUrl}`);
     if (lastIsFromUs) {
       this.log(`Last message is from us — skipping: ${convoUrl}`);
       // Mark as replied so we don't revisit for 5 min
@@ -443,6 +447,7 @@ class MessengerBot {
 
     // Pick next template
     const template = await this.db.getNextTemplate();
+    this.log(`Template: ${template ? `#${template.id} "${template.body.slice(0, 40)}..."` : 'NONE'}`);
     if (!template) {
       this.log('No templates configured — skipping');
       return false;
@@ -454,6 +459,14 @@ class MessengerBot {
     await sleep(delay);
 
     if (!this.running) return false;
+
+    // Facebook may SPA-navigate during the delay — re-navigate to the target thread if needed
+    const postDelayUrl = this.page.url().split('?')[0];
+    if (!postDelayUrl.includes(convoUrl.replace('https://www.facebook.com', ''))) {
+      this.log(`Page drifted to ${postDelayUrl} during delay — re-navigating to ${convoUrl}`);
+      await this.page.goto(convoUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      await sleep(3000);
+    }
 
     // Find message input
     let inputEl = null;
@@ -515,6 +528,19 @@ class MessengerBot {
       for (let i = 0; i < 10; i++) {
         const hasDialog = await this.page.$('div[role="dialog"]').catch(() => null);
         if (!hasDialog) break;
+
+        // Only handle dialogs that are PIN/encryption related — ignore notification popups, etc.
+        const isPinDialog = await this.page.evaluate(() => {
+          for (const d of document.querySelectorAll('div[role="dialog"]')) {
+            const t = (d.innerText || '').toLowerCase();
+            if (t.includes('restore messages') || t.includes('encryption') ||
+                t.includes('continue without') || t.includes('end-to-end') ||
+                t.includes('pin') || t.includes("don't restore")) return true;
+          }
+          return false;
+        }).catch(() => false);
+
+        if (!isPinDialog) break;
 
         // Look for the confirmation layer "Continue without restoring?" and click "Don't restore messages"
         const confirmCoords = await this.page.evaluate(() => {
