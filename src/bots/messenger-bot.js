@@ -1,8 +1,12 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-// Use puppeteer directly — puppeteer-extra has ESM/CJS incompatibility with puppeteer-core v21+
-const puppeteer = require('puppeteer');
+// puppeteer v21+ is ESM-only; use dynamic import() from CJS to load it at runtime
+let _puppeteer = null;
+async function getPuppeteer() {
+  if (!_puppeteer) _puppeteer = (await import('puppeteer')).default;
+  return _puppeteer;
+}
 
 const POLL_INTERVAL = 45000;
 const BROWSER_ARGS = [
@@ -85,6 +89,7 @@ class MessengerBot {
     fs.mkdirSync(profileDir, { recursive: true });
 
     this.log(`Launching browser (profile: ${profileDir})...`);
+    const puppeteer = await getPuppeteer();
     this.browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
