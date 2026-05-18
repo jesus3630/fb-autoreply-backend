@@ -413,13 +413,18 @@ class MessengerBot {
     // We find visible message text bubbles via dir="auto" and check their center x position.
     const lastIsFromUs = await this.page.evaluate(() => {
       const vpWidth = document.documentElement.clientWidth || window.innerWidth || 1280;
+      const vpHeight = document.documentElement.clientHeight || window.innerHeight || 900;
       const bubbles = Array.from(document.querySelectorAll('[dir="auto"]')).filter(el => {
+        // Exclude input fields — the message compose box is also dir="auto" and contenteditable
+        if (el.getAttribute('contenteditable')) return false;
+        if (el.getAttribute('role') === 'textbox') return false;
         const text = (el.textContent || '').trim();
         if (!text) return false;
         const rect = el.getBoundingClientRect();
-        // Must be a visible, reasonably-sized element (message bubble range)
+        // Must be in chat area (not sidebar, not input row at very bottom)
         return rect.width > 30 && rect.width < 700 && rect.height > 14 &&
-               rect.top > 0 && rect.bottom > 0;
+               rect.top > 100 && rect.bottom < (vpHeight - 80) &&
+               rect.left > 300; // chat panel starts after sidebar
       });
       if (!bubbles.length) return false;
       const last = bubbles[bubbles.length - 1];
