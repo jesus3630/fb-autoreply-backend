@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FbAccount, BotStatus } from '../accounts/fb-account.entity';
@@ -17,7 +17,7 @@ interface RunningBot {
 }
 
 @Injectable()
-export class BotsService {
+export class BotsService implements OnModuleInit {
   private readonly logger = new Logger(BotsService.name);
   private running = new Map<string, RunningBot>();
 
@@ -27,6 +27,21 @@ export class BotsService {
     @InjectRepository(ReplyLog) private logs: Repository<ReplyLog>,
     private accountsService: AccountsService,
   ) {}
+
+  async onModuleInit() {
+    // Auto-restart any bots that were running before a server restart/deploy
+    const runningAccounts = await this.accounts.find({ where: { status: BotStatus.RUNNING } });
+    if (runningAccounts.length === 0) return;
+    this.logger.log(`Auto-restarting ${runningAccounts.length} bot(s) from previous session...`);
+    for (const account of runningAccounts) {
+      if (!account.cookies) continue;
+      try {
+        await this.start(account.userId, account.id);
+      } catch (err) {
+        this.logger.error(`Auto-restart failed for ${account.label}: ${(err as Error).message}`);
+      }
+    }
+  }
 
   async start(userId: string, accountId: string) {
     const account = await this.accounts.findOne({ where: { id: accountId, userId } });
