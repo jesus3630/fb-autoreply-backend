@@ -4,11 +4,19 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../users/user.entity';
+import { Template } from '../templates/template.entity';
+
+const DEFAULT_TEMPLATES = [
+  `Hey! Thanks for reaching out about my listing. It's still available! When would you like to take a look?`,
+  `Hi there! Yes, it's still available. I can do cash, Zelle, or Venmo. Let me know if you want to set up a time to see it!`,
+  `Thanks for your interest! The price is firm but I'm happy to answer any questions. Want to schedule a viewing?`,
+];
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectRepository(User) private users: Repository<User>,
+    @InjectRepository(Template) private templates: Repository<Template>,
     private jwt: JwtService,
   ) {}
 
@@ -19,6 +27,10 @@ export class AuthService {
     const hashed = await bcrypt.hash(password, 10);
     const user = this.users.create({ email, password: hashed, name });
     await this.users.save(user);
+
+    await this.templates.save(
+      DEFAULT_TEMPLATES.map((content) => this.templates.create({ userId: user.id, content }))
+    );
 
     return this.issueToken(user);
   }
