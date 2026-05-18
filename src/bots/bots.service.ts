@@ -29,12 +29,15 @@ export class BotsService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Auto-restart any bots that were running before a server restart/deploy
-    const runningAccounts = await this.accounts.find({ where: { status: BotStatus.RUNNING } });
-    if (runningAccounts.length === 0) return;
+    const allAccounts = await this.accounts.find();
+    this.logger.log(`onModuleInit: ${allAccounts.length} accounts — ${allAccounts.map(a => `${a.label}:${a.status}:cookies=${!!a.cookies}`).join(', ')}`);
+    const runningAccounts = allAccounts.filter(a => a.status === BotStatus.RUNNING && a.cookies);
+    if (runningAccounts.length === 0) {
+      this.logger.log('No bots to auto-restart.');
+      return;
+    }
     this.logger.log(`Auto-restarting ${runningAccounts.length} bot(s) from previous session...`);
     for (const account of runningAccounts) {
-      if (!account.cookies) continue;
       try {
         await this.start(account.userId, account.id);
       } catch (err) {
