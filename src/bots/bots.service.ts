@@ -34,6 +34,9 @@ export class BotsService {
     if (!account.cookies) throw new BadRequestException('Paste your Facebook cookies before starting the bot.');
     if (this.running.has(accountId)) return { status: 'already_running' };
 
+    const templateCount = await this.templates.count({ where: { userId, isActive: true } });
+    if (templateCount === 0) throw new BadRequestException('Add at least one reply template before starting the bot.');
+
     const db = new BotDbAdapter(this.accounts, this.templates, this.logs, userId);
 
     const botAccount = {
