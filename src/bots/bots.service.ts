@@ -1,48 +1,58 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FbAccount, BotStatus } from '../accounts/fb-account.entity';
-import { TemplatesService } from '../templates/templates.service';
-import { AnalyticsService } from '../analytics/analytics.service';
+import { Template } from '../templates/template.entity';
+import { ReplyLog } from '../analytics/reply-log.entity';
 import { AccountsService } from '../accounts/accounts.service';
+import { BotDbAdapter } from './bot-db-adapter';
 
-interface BotWorker {
-  accountId: string;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const MessengerBot = require('./messenger-bot');
+
+interface RunningBot {
+  instance: any;
   userId: string;
-  status: BotStatus;
-  process: ReturnType<typeof import('child_process').spawn> | null;
   startedAt: Date;
 }
 
 @Injectable()
 export class BotsService {
   private readonly logger = new Logger(BotsService.name);
-  private workers = new Map<string, BotWorker>();
+  private running = new Map<string, RunningBot>();
 
   constructor(
     @InjectRepository(FbAccount) private accounts: Repository<FbAccount>,
-    private templatesService: TemplatesService,
-    private analyticsService: AnalyticsService,
+    @InjectRepository(Template) private templates: Repository<Template>,
+    @InjectRepository(ReplyLog) private logs: Repository<ReplyLog>,
     private accountsService: AccountsService,
   ) {}
 
   async start(userId: string, accountId: string) {
     const account = await this.accounts.findOne({ where: { id: accountId, userId } });
     if (!account) throw new NotFoundException('Account not found');
-    if (this.workers.has(accountId)) return { status: 'already_running' };
+    if (!account.cookies) throw new BadRequestException('Paste your Facebook cookies before starting the bot.');
+    if (this.running.has(accountId)) return { status: 'already_running' };
 
-    const worker: BotWorker = {
-      accountId,
-      userId,
-      status: BotStatus.RUNNING,
-      process: null,
-      startedAt: new Date(),
+    const db = new BotDbAdapter(this.accounts, this.templates, this.logs, userId);
+
+    const botAccount = {
+      id: accountId,
+      label: account.label,
+      cookies: account.cookies,
     };
 
-    this.workers.set(accountId, worker);
+    const bot = new MessengerBot(botAccount, db);
+    this.running.set(accountId, { instance: bot, userId, startedAt: new Date() });
     await this.accountsService.updateStatus(accountId, BotStatus.RUNNING);
-    this.logger.log(`Bot started for account ${accountId}`);
 
+    bot.start().catch(async (err: Error) => {
+      this.logger.error(`Bot crashed [${account.label}]: ${err.message}`);
+      this.running.delete(accountId);
+      await this.accountsService.updateStatus(accountId, BotStatus.ERROR, err.message);
+    });
+
+    this.logger.log(`Bot started: ${account.label} (${accountId})`);
     return { status: 'started', accountId };
   }
 
@@ -50,34 +60,24 @@ export class BotsService {
     const account = await this.accounts.findOne({ where: { id: accountId, userId } });
     if (!account) throw new NotFoundException('Account not found');
 
-    const worker = this.workers.get(accountId);
-    if (worker?.process) {
-      worker.process.kill();
+    const running = this.running.get(accountId);
+    if (running) {
+      await running.instance.stop();
+      this.running.delete(accountId);
     }
 
-    this.workers.delete(accountId);
     await this.accountsService.updateStatus(accountId, BotStatus.STOPPED);
-    this.logger.log(`Bot stopped for account ${accountId}`);
-
+    this.logger.log(`Bot stopped: ${account.label} (${accountId})`);
     return { status: 'stopped', accountId };
-  }
-
-  getRunningAccounts(userId: string): string[] {
-    return Array.from(this.workers.values())
-      .filter((w) => w.userId === userId)
-      .map((w) => w.accountId);
   }
 
   async getStatus(userId: string) {
     const accounts = await this.accounts.find({ where: { userId } });
     return accounts.map((acc) => ({
       ...acc,
-      isRunning: this.workers.has(acc.id),
+      isRunning: this.running.has(acc.id),
+      hasCookies: !!acc.cookies,
+      cookies: undefined, // never leak cookies to frontend
     }));
-  }
-
-  async recordReply(accountId: string, conversationId: string, templateContent: string, buyerName?: string, messagePreview?: string) {
-    await this.analyticsService.logReply(accountId, conversationId, templateContent, buyerName, messagePreview);
-    this.logger.log(`Reply logged for account ${accountId}, conversation ${conversationId}`);
   }
 }

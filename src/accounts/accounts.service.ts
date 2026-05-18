@@ -28,6 +28,13 @@ export class AccountsService {
     return this.accounts.save(account);
   }
 
+  async updateCookies(userId: string, accountId: string, cookies: string) {
+    const account = await this.accounts.findOne({ where: { id: accountId, userId } });
+    if (!account) throw new NotFoundException('Account not found');
+    await this.accounts.update(accountId, { cookies });
+    return { success: true };
+  }
+
   async remove(userId: string, accountId: string) {
     const account = await this.accounts.findOne({ where: { id: accountId, userId } });
     if (!account) throw new NotFoundException('Account not found');

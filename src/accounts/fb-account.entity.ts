@@ -36,6 +36,10 @@ export class FbAccount {
   @Column({ nullable: true, type: 'timestamptz' })
   lastSeenAt: Date;
 
+  // Facebook session cookies — JSON string (array or object format)
+  @Column({ nullable: true, type: 'text' })
+  cookies: string;
+
   @OneToMany(() => ReplyLog, (log) => log.account)
   replyLogs: ReplyLog[];
 
