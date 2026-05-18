@@ -12,8 +12,7 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
-
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+COPY --from=build /root/.cache/puppeteer /root/.cache/puppeteer
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
