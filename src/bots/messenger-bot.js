@@ -148,6 +148,9 @@ class MessengerBot {
       try {
         await this._poll(pollCount);
         this.consecutiveErrors = 0;
+        // Heartbeat — refresh lastSeenAt on every healthy poll so the watchdog
+        // can tell a live bot from a hung/crashed one.
+        this.db.setAccountStatus(this.account.id, 'running', null);
       } catch (err) {
         const isTransient = (
           err.message.includes('detached Frame') ||
