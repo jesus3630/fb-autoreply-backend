@@ -21,6 +21,7 @@ export class AuthService {
   ) {}
 
   async register(email: string, password: string, name?: string) {
+    email = email.trim().toLowerCase();
     const existing = await this.users.findOne({ where: { email } });
     if (existing) throw new ConflictException('Email already registered');
 
@@ -36,6 +37,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
+    email = email.trim().toLowerCase();
     const user = await this.users.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
